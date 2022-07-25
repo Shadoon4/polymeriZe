@@ -1,0 +1,187 @@
+#!/bin/env python
+
+import os
+import random
+import shutil
+#USER INSTRUCTIONS
+# You can run the script using "python grow_poly.py"
+# Edit the user parameters to change the main monomers, the "extra" monomers, the desired polymer length, and the proportion of monomers that will be "extra"
+# Prior to doing so, make sure you have all of the required files, listed below
+# For the "extra" monomers used in the copolymerization, you should ensure you have both enantiomers of monomer, and also have those files listed in "extra_poly" (see user parameters)
+#END USER INSTRUCTIONS
+
+#REQUIREMENTS:
+  #The packmol executible (compiled at ~mrobo/packmol/)
+  #The packmol script "packmol_center.inp"
+  #Fomatted pdb files for the monomer units: 
+    #main 2-ethyl-hexyl monomers: "r1_2-ehx.pdb", "r1_2-ehx.pdb", "s1_2-ehx.pdb", "s2_2-ehx.pdb", 
+    #(optional) alt 2-ethyl-hexyl monomers: "alt_r1_2-ehx.pdb", "alt_r1_2-ehx.pdb", "alt_s1_2-ehx.pdb", "alt_s2_2-ehx.pdb"
+    #monomers associated with the copolymer: (In this example) "benzyl-1.pdb", "benzyl-2.pdb"
+  #Formatted pdb files for the start and end monomers:
+    #seed.pdb
+    #cap.pdb
+#END REQUIREMENTS
+
+#USER PARAMETERS
+main_poly = ["r1_2-ehx.pdb", "r1_2-ehx.pdb", "s1_2-ehx.pdb", "s2_2-ehx.pdb"] # 2-eh monomers
+extra_poly = ["4-pyridyl.pdb"] # additional monomers to be used for the copolymer
+final_length = 17 # final length (in monomers) of polymer
+proportion = 0.5 # proportion of monomers within the copolymer that are "extra" 
+#END USER PARAMETERS
+
+#FUNCTION DEFINITIONS
+def read_pdb(pdbfile):
+  file1 = open(pdbfile)
+  f1 = list(x for x in (l.strip() for l in file1) if x)
+  lines = []
+  for line in f1:
+    lines.append(line.split())
+  return lines
+
+#The "end" of a polymer strand is defined as the last CB2 atom in the strand
+def find_end(read_file):
+  cb1_list = []
+  cb2_list = []
+  for i,line in enumerate(read_file):
+    if len(line) == 12:
+      if line[2] == 'CB1':
+        cb1_list.append(read_file[i])
+      elif line[2] == 'CB2':
+        cb2_list.append(read_file[i])
+  return [cb2_list[-1], cb1_list[-1]]
+
+#The "start" of a polymer strand is defined as the first CB1 atom 
+def find_start(read_file):
+  for i,line in enumerate(read_file):
+    if len(line) == 12:
+      if line[2] == 'CB1':
+        cb1 = i+1
+  return cb1
+
+#Used for add_res
+#This function generates the packmol input file that will add a new monomer in the correct location
+def write_input(pdbfile, conn, in_val, out_val, x1, y1, z1, x2, y2, z2):
+  f = open("test.inp", "w")
+  f.write("tolerance 2.0\n")
+  f.write("filetype pdb\n")
+  f.write("output growing_strand.pdb\n")
+  f.write(" \n")
+  f.write("structure centered_strand.pdb\n")
+  f.write("\tresnumbers 2\n")
+  f.write("\tcenter\n")
+  f.write("\tfixed 0. 0. 0. 0. 0. 0.\n")
+  f.write("end structure\n")
+  f.write(" \n")
+  f.write("structure " + str(pdbfile) + "\n")
+  f.write("\tnumber 1\n")
+  f.write("\tresnumbers 2\n")
+  f.write("\tinside box -100. -100. -100. 100. 100. 100.\n")
+  f.write("\tatoms " + str(conn) + "\n")
+  f.write("\t\toutside sphere " + str(x2) + " " + str(y2) + " " + str(z2) + " " + str(out_val) + "\n")
+  f.write("\t\tinside sphere " + str(x1) + " " + str(y1) + " " + str(z1) + " " + str(in_val) + "\n")
+  f.write("\tend atoms\n")
+  f.write("end structure\n")
+  f.close
+
+#function that checks if the packmol script succeeded
+def test_output(output):
+  f = open(output)
+  test = list(x for x in (l.strip() for l in f) if x)
+  return_val = 1
+  for line in test:
+    if line == 'Success!':
+      return_val = 0
+  return return_val
+
+#MAIN FUNCTION USED TO ADD NEW RESIDUES
+def add_res(next_res, resfile):
+  os.system("./packmol < packmol_center.inp > packmol_output.out") # Center the growing strand prior to 
+  os.system("tail -n60 centered_strand.pdb > strand_end.pdb")      # addition of the new monomer.
+  end = find_end(read_pdb("strand_end.pdb"))                       # This ensures that the new monomer 
+  xcb2 = end[0][6]                                                 # placement is in the right location.
+  ycb2 = end[0][7]
+  zcb2 = end[0][8] # The coordinates of the last CB1 and CB2 atoms in the growing strand are needed
+  xcb1 = end[1][6] # The new monomer will be placed near the last CB2 atom, away from the last CB1 atom 
+  ycb1 = end[1][7]
+  zcb1 = end[1][8]
+
+  next_start = find_start(next_res) # Obtains the CB1 atom in the new residue
+  filename = resfile
+  # The next two lines will add the CB1 atom in the new monomer to be within 3 angstrom 
+  # of the last CB2 atom in the growing polymer strand, and at least 4 angstrom away from the last CB1
+  # atom (which provides some directionality to chain growth)
+  write_input(filename, next_start, 3, 4, xcb2, ycb2, zcb2, xcb1, ycb1, zcb1) 
+  os.system("./packmol < test.inp > packmol_output.out")                     
+  
+
+  #This set of conditionals is only relevant if the first attempt did not work
+  os.system("tail -n40 packmol_output.out > test.out")
+  if test_output("test.out") == 1:
+    print("larger tolerance required!")
+    write_input(filename, next_start, 5, 6, xcb2, ycb2, zcb2, xcb1, ycb1, zcb1)
+    os.system("./packmol < test.inp > packmol_output.out")
+    os.system("tail -n40 packmol_output.out > test.out")
+    if test_output("test.out") == 1:
+      alt_res = str("alt_" + resfile)
+      if os.path.exists(alt_res):               # The 2-ethyl-hexyl monomers have "alternatives" where the 
+        alt_read = read_pdb(alt_res)            # position of the 2-ethyl-hexyl group is changed, so that we can
+        alt_start = find_start(alt_read)        # take another shot at adding a monomer. I don't think that 
+        print("alternative residue attempted!") # they end up getting used that much, however.
+
+        write_input(alt_res, alt_start, 5, 6, xcb2, ycb2, zcb2, xcb1, ycb1, zcb1)
+        os.system("./packmol < test.inp > packmol_output.out")
+        os.system("tail -n40 packmol_output.out > test.out")
+        if test_output("test.out") == 1:
+          print("Packmol cannot add this residue!")
+          print("Exiting!")
+          exit(1)
+      else:
+        print("Packmol cannot add this residue!") # If the attempt with a larger tolerance fails, and their is no 
+        print("Exiting!")                         # alternative residue, or it also fails, then the program 
+        exit(1)                                   # terminates. Failure generally occurs because the polymer grew 
+#END FUNCTION DEFINITIONS                         # into itself (like the snake game), so there was no viable place 
+                                                  # to put a unit of monomer.
+#The centering script is needed for monomer addition
+##GENERATE CENTERING SCRIPT
+#c = open("packmol_center.inp", "w")
+#c.write(" \n")
+#c.write("tolerance 2.0\n")
+#c.write("filetype pdb\n")
+#c.write("output centered_strand.pdb\n")
+#c.write(" \n")
+#c.write("structure growing_strand.pdb\n")
+#c.write("\tresnumbers 2\n")
+#c.write("\tcenter\n")
+#c.write("\tfixed 0. 0. 0. 0. 0. 0.\n")
+#c.write("end structure\n")
+#c.close
+##END GENERATION OF CENTERING SCRIPT
+
+#MAIN SCRIPT BODY
+main_read = []
+main_length = len(main_poly) - 1
+for poly in main_poly:
+  main_read.append(read_pdb(poly))
+
+extra_read = []
+extra_length = len(extra_poly) -1
+for poly in extra_poly:
+  extra_read.append(read_pdb(poly))
+
+shutil.copyfile("seed.pdb", "growing_strand.pdb")
+
+poly_length = 1
+while poly_length != final_length-1:
+  val = random.random()
+  if val > proportion:
+    rng = random.randint(0, main_length)
+    print(main_poly[rng])
+    add_res(main_read[rng], main_poly[rng])
+  else:
+    rng = random.randint(0, extra_length)
+    print(extra_poly[rng])
+    add_res(extra_read[rng], extra_poly[rng]) 
+  poly_length += 1
+
+add_res(read_pdb("cap.pdb"), "cap.pdb")
+#END SCRIPT
