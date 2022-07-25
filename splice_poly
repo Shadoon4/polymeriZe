@@ -1,0 +1,146 @@
+#!/bin/env python
+
+import os
+import random
+import shutil
+from sys import argv
+
+#USER INSTRUCTIONS
+# You can run the script using "python splice_poly.py A B", where A and B are the (inclusive) range of strands that you want to bundle into a big strand. 
+#This script is not as heavily commented as "grow_poly.py", as the functions here are similar to that in "grow_poly.py"
+# Prior to using the script, make sure you have all of the required files, listed below
+#END USER INSTRUCTIONS
+
+#REQUIREMENTS:
+  #The packmol executible (compiled at ~mrobo/packmol/)
+  #The packmol script "packmol_center.inp"
+  #PDB files of the straightened polymer strands
+  #Formatted pdb files for the start and end monomers:
+    #seed.pdb
+    #cap.pdb
+#END REQUIREMENTS
+
+##GENERATE CENTERING SCRIPT
+#c = open("packmol_center.inp", "w")
+#c.write("\n")
+#c.write("tolerance 2.0\n")
+#c.write("filetype pdb\n")
+#c.write("output centered_strand.pdb\n")
+#c.write("\n")
+#c.write("\n")
+#c.write("structure growing_strand.pdb\n")
+#c.write("\tcenter\n")
+#c.write("\tresnumbers 2\n")
+#c.write("\tfixed 0. 0. 0. 0. 0. 0.\n")
+#c.write("end structure\n")
+#c.close
+##END GENERATION OF CENTERING SCRIPT
+
+#FUNCTION DEFINITIONS
+def read_pdb(pdbfile):
+  file1 = open(pdbfile)
+  f1 = list(x for x in (l.strip() for l in file1) if x)
+  lines = []
+  for line in f1:
+    lines.append(line.split())
+  return lines
+
+def find_end(read_file):
+  cb1_list = []
+  cb2_list = []
+  for i,line in enumerate(read_file):
+    if len(line) == 12:
+      if line[2] == 'CB1':
+        cb1_list.append(read_file[i])
+      elif line[2] == 'CB2':
+        cb2_list.append(read_file[i])
+  return [cb2_list[-1], cb1_list[-1]]
+
+def find_start(read_file):
+  cb1_list = []
+  for i,line in enumerate(read_file):
+    if len(line) == 12:
+      if line[2] == 'CB1':
+        cb1_list.append(i+1)
+  return cb1_list[0]
+
+def write_input(pdbfile, conn, in_val, out_val, x1, y1, z1, x2, y2, z2):
+  f = open("test.inp", "w")
+  f.write("tolerance 2.0\n")
+  f.write("filetype pdb\n")
+  f.write("output growing_strand.pdb\n")
+  f.write(" \n")
+  f.write("structure centered_strand.pdb\n")
+  f.write("\tresnumbers 2\n")
+  f.write("\tcenter\n")
+  f.write("\tfixed 0. 0. 0. 0. 0. 0.\n")
+  f.write("end structure\n")
+  f.write(" \n")
+  f.write("structure " + str(pdbfile) + "\n")
+  f.write("\tnumber 1\n")
+  f.write("\tresnumbers 2\n")
+  f.write("\tinside box -100. -100. -100. 100. 100. 100.\n")
+  f.write("\tatoms " + str(conn) + "\n")
+  f.write("\t\toutside sphere " + str(x2) + " " + str(y2) + " " + str(z2) + " " + str(out_val) + "\n")
+  f.write("\t\tinside sphere " + str(x1) + " " + str(y1) + " " + str(z1) + " " + str(in_val) + "\n")
+  f.write("\tend atoms\n")
+  f.write("end structure\n")
+  f.close
+
+def test_output(output):
+  f = open(output)
+  test = list(x for x in (l.strip() for l in f) if x)
+  return_val = 1
+  for line in test:
+    if line == 'Success!':
+      return_val = 0
+  return return_val
+
+def add_res(next_res, resfile):
+  os.system("./packmol < packmol_center.inp > packmol_output.out")
+  os.system("tail -n60 centered_strand.pdb > strand_end.pdb")
+  end = find_end(read_pdb("strand_end.pdb"))
+  xcb1 = end[0][6]
+  ycb1 = end[0][7]
+  zcb1 = end[0][8]
+  xcb2 = end[1][6]
+  ycb2 = end[1][7]
+  zcb2 = end[1][8]
+
+  next_start = find_start(next_res)
+  filename = resfile
+  write_input(filename, next_start, 3, 4, xcb1, ycb1, zcb1, xcb2, ycb2, zcb2)
+  os.system("./packmol < test.inp > packmol_output.out")
+  
+  os.system("tail -n40 packmol_output.out > test.out")
+  if test_output("test.out") == 1:
+    print("larger tolerance required!")
+    write_input(filename, next_start, 5, 6, xcb1, ycb1, zcb1, xcb2, ycb2, zcb2)
+    os.system("./packmol < test.inp > packmol_output.out")
+    os.system("tail -n40 packmol_output.out > test.out")
+    if test_output("test.out") == 1:
+      print("Packmol cannot add this residue!")
+      print("Exiting!")
+      exit(1)
+
+#END FUNCTION DEFINITIONS
+
+#BEGIN MAIN SCRIPT
+shutil.copyfile("seed.pdb", "growing_strand.pdb")
+
+for i in range(int(argv[1]),int(argv[2])+1):
+  num = str(i).rjust(2,'0')
+  poly_file = "strand_" + str(num) + ".out.pdb"
+  print(poly_file)
+  poly_read = read_pdb(poly_file)
+  add_res(poly_read, poly_file)
+
+#for i in range(75,82):
+#  num = str(i).rjust(2,'0')
+#  poly_file = "strand_" + str(num) + ".out.pdb"
+#  print(poly_file)
+#  poly_read = read_pdb(poly_file)
+#  add_res(poly_read, poly_file)
+
+add_res(read_pdb("cap.pdb"), "cap.pdb")
+#END MAIN SCRIPT
