@@ -1,0 +1,9 @@
+#!/bin/bash
+
+for item in `ls strand_??.out.pdb`
+do
+  sed -i 's/BNZ  /BNZ A/g' $item #sed lines are needed for consistent PDB formatting
+  sed -i 's/EHX  /EHX A/g' $item
+  sed 1,36d $item > tmp
+  head -n -39 tmp > $item
+done
